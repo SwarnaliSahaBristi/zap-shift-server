@@ -278,6 +278,31 @@ async function run() {
       res.send(result);
     })
 
+    app.patch('/rider/:id', verifyFbToken, async(req,res)=>{
+      const status = req.body.status;
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)}
+      const updatedDoc = {
+        $set: {
+          status: status
+        }
+      }
+      const result = await ridersCollection.updateOne(query,updatedDoc)
+
+      if(status === 'approved'){
+        const email = req.body.email;
+        const userQuery = {email}
+        const updateUser = {
+          $set:{
+            role: 'rider'
+          }
+        }
+        const userResult = await userCollection.updateOne(userQuery,updateUser)
+      }
+
+      res.send(result)
+    })
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
