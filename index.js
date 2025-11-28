@@ -30,14 +30,22 @@ app.use(express.json());
 app.use(cors());
 
 //verify Firebase token
-const verifyFbToken = (req, res, next) => {
-  console.log("headers in the middleware", req.headers.authorization);
+const verifyFbToken = async(req, res, next) => {
   const token = req.headers.authorization;
   if(!token){
     return res.status(401).send({message: 'unauthorize access'})
   }
 
-  next();
+  try{
+    const idToken = token.split(' ')[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log('decoded in the token',decoded)
+    req.decoded_email = decoded.email;
+    next();
+  }
+  catch(err){
+    return res.status(401).send({message: 'unauthorize access'})
+  }
 };
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster2002.1tfbne8.mongodb.net/?appName=Cluster2002`;
@@ -57,8 +65,26 @@ async function run() {
     await client.connect();
 
     const db = client.db("zap_shift_db");
+    const userCollection = db.collection("users");
     const parcelsCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const ridersCollection = db.collection("riders");
+
+    //user related apis
+    app.post('/users',async(req,res)=>{
+      const user = req.body;
+      user.role = 'user';
+      user.createdAt = new Date();
+      const email = user.email;
+      const userExist = await userCollection.findOne({email})
+
+      if(userExist){
+        return res.send({message: 'user exist'})
+      }
+
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    })
 
     //parcels api
     app.get("/parcels", async (req, res) => {
@@ -220,11 +246,37 @@ async function run() {
 
       if (email) {
         query.customerEmail = email;
+
+        //check email address
+        if(email !== req.decoded_email){
+          return res.status(403).send({message: 'forbidden access'})
+        }
       }
-      const cursor = paymentCollection.find(query);
+      const cursor = paymentCollection.find(query).sort({paidAt: -1});
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    //riders related apis
+    app.get('/rider', async(req,res)=>{
+      const query = {}
+      if(req.query.status){
+        query.status = req.query.status
+      }
+      const cursor = ridersCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    })
+
+
+    app.post('/rider', async(req,res)=>{
+      const rider = req.body;
+      rider.status = 'pending';
+      rider.createdAt = new Date();
+
+      const result = await ridersCollection.insertOne(rider);
+      res.send(result);
+    })
 
     await client.db("admin").command({ ping: 1 });
     console.log(
