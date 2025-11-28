@@ -8,6 +8,15 @@ const port = process.env.PORT || 3000;
 
 const crypto = require("crypto");
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./dragon-news-auth-7bc5f-firebase-adminsdk-fbsvc-201f826be6.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+
 function generateTrackingId() {
   const prefix = "PRCL"; // your brand prefix
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, ""); // YYYYMMDD
@@ -19,6 +28,17 @@ function generateTrackingId() {
 //middleware
 app.use(express.json());
 app.use(cors());
+
+//verify Firebase token
+const verifyFbToken = (req, res, next) => {
+  console.log("headers in the middleware", req.headers.authorization);
+  const token = req.headers.authorization;
+  if(!token){
+    return res.status(401).send({message: 'unauthorize access'})
+  }
+
+  next();
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster2002.1tfbne8.mongodb.net/?appName=Cluster2002`;
 
@@ -38,7 +58,7 @@ async function run() {
 
     const db = client.db("zap_shift_db");
     const parcelsCollection = db.collection("parcels");
-    const paymentCollection = db.collection('payments');
+    const paymentCollection = db.collection("payments");
 
     //parcels api
     app.get("/parcels", async (req, res) => {
@@ -81,7 +101,7 @@ async function run() {
     //new
     app.post("/payment-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
-      const amount = parseInt(paymentInfo.cost)*100;
+      const amount = parseInt(paymentInfo.cost) * 100;
       const session = await stripe.checkout.sessions.create({
         line_items: [
           {
@@ -103,7 +123,7 @@ async function run() {
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
       });
-      res.send({url: session.url})
+      res.send({ url: session.url });
     });
 
     //old
@@ -127,7 +147,7 @@ async function run() {
         mode: "payment",
         metadata: {
           parcelId: paymentInfo.parcelId,
-          parcelName: paymentInfo.parcelName
+          parcelName: paymentInfo.parcelName,
         },
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
@@ -140,33 +160,70 @@ async function run() {
       const sessionId = req.query.session_id;
       // console.log('session id', sessionId)
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      console.log('session retrieve', session)
-      if(session.payment_status === 'paid'){
+      // console.log('session retrieve', session)
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
+
+      const paymentExist = await paymentCollection.findOne(query);
+      console.log(paymentExist);
+      if (paymentExist) {
+        return res.send({
+          message: "already exist",
+          transactionId,
+          trackingId: paymentExist.trackingId,
+        });
+      }
+
+      const trackingId = generateTrackingId();
+
+      if (session.payment_status === "paid") {
         const id = session.metadata.parcelId;
-        const query = {_id: new ObjectId(id)};
+        const query = { _id: new ObjectId(id) };
         const update = {
           $set: {
-            paymentStatus : 'paid',
-            trackingId: generateTrackingId()
-          }
-        }
-        const result = await parcelsCollection.updateOne(query,update)
+            paymentStatus: "paid",
+            trackingId: trackingId,
+          },
+        };
+        const result = await parcelsCollection.updateOne(query, update);
         const payment = {
-          amount : session.amount_total/100,
+          amount: session.amount_total / 100,
           currency: session.currency,
           customerEmail: session.customer_email,
           parcelId: session.metadata.parcelId,
           parcelName: session.metadata.parcelName,
           transactionId: session.payment_intent,
-          paymentStatus: session. payment_status,
+          paymentStatus: session.payment_status,
           paidAt: new Date(),
-        }
-        if(session. payment_status === 'paid'){
-            const resultPayment = await paymentCollection.insertOne(payment)
-            res.send({success: true, modifyParcel: result, paymentInfo: resultPayment})
+          trackingId: trackingId,
+        };
+        if (session.payment_status === "paid") {
+          const resultPayment = await paymentCollection.insertOne(payment);
+          res.send({
+            success: true,
+            modifyParcel: result,
+            trackingId: trackingId,
+            transactionId: session.payment_intent,
+            paymentInfo: resultPayment,
+          });
         }
       }
       res.send({ success: false });
+    });
+
+    //payment related apis
+    app.get("/payments", verifyFbToken, async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+
+      // console.log('headers',req.headers)
+
+      if (email) {
+        query.customerEmail = email;
+      }
+      const cursor = paymentCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
     });
 
     await client.db("admin").command({ ping: 1 });
