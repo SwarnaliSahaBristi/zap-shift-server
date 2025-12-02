@@ -81,6 +81,16 @@ async function run() {
       }
       next();
     };
+    const verifyRider = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+
+      if (!user || user.role !== "rider") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
 
     const logTracking = async (trackingId, status) => {
       const log = {
@@ -195,6 +205,26 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/parcels/delivery-status/stats', async(req,res)=>{
+      const pipeline = [
+        {
+          $group:{
+            _id: '$deliveryStatus',
+            count: {$sum: 1}
+          }
+        },
+        {
+          $project:{
+            status: '$_id',
+            count : 1,
+            
+          }
+        }
+      ]
+      const result = await parcelsCollection.aggregate(pipeline).toArray();
+      res.send(result)
+    });
+
     app.post("/parcels", async (req, res) => {
       const parcel = req.body;
       const trackingId = generateTrackingId();
@@ -202,7 +232,7 @@ async function run() {
       parcel.createdAt = new Date();
       parcel.trackingId = trackingId;
 
-      logTracking(trackingId,'parcel_created')
+      logTracking(trackingId, "parcel_created");
 
       const result = await parcelsCollection.insertOne(parcel);
       res.send(result);
@@ -297,7 +327,7 @@ async function run() {
         mode: "payment",
         metadata: {
           parcelId: paymentInfo.parcelId,
-          trackingId: paymentInfo.trackingId
+          trackingId: paymentInfo.trackingId,
         },
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
@@ -376,21 +406,19 @@ async function run() {
           paidAt: new Date(),
           trackingId: trackingId,
         };
-        if (session.payment_status === "paid") {
-          const resultPayment = await paymentCollection.insertOne(payment);
+        const resultPayment = await paymentCollection.insertOne(payment);
 
-          logTracking(trackingId, "parcel_paid");
+        logTracking(trackingId, "parcel_paid");
 
-          res.send({
-            success: true,
-            modifyParcel: result,
-            trackingId: trackingId,
-            transactionId: session.payment_intent,
-            paymentInfo: resultPayment,
-          });
-        }
+        return res.send({
+          success: true,
+          modifyParcel: result,
+          trackingId: trackingId,
+          transactionId: session.payment_intent,
+          paymentInfo: resultPayment,
+        });
       }
-      res.send({ success: false });
+      return res.send({ success: false });
     });
 
     //payment related apis
