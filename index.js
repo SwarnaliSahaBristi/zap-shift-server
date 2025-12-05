@@ -10,7 +10,12 @@ const crypto = require("crypto");
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./dragon-news-auth-7bc5f-firebase-adminsdk-fbsvc-201f826be6.json");
+// const serviceAccount = require("./dragon-news-auth-7bc5f-firebase-adminsdk-fbsvc-201f826be6.json");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -60,7 +65,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("zap_shift_db");
     const userCollection = db.collection("users");
@@ -267,6 +272,7 @@ async function run() {
         riderQuery,
         riderUpdatedDoc
       );
+      res.send(result)
     });
 
     app.patch("/parcels/:id/status", async (req, res) => {
@@ -554,10 +560,10 @@ async function run() {
       res.send(result);
     });
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
   }
 }
